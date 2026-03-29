@@ -1,0 +1,27 @@
+{
+  "name": "gastosin-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .js,.jsx"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "pdfjs-dist": "^4.6.82",
+    "idb": "^8.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1",
+    "eslint": "^9.9.0",
+    "tailwindcss": "^3.4.10",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.45"
+  }
+}

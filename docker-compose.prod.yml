@@ -1,0 +1,24 @@
+services:
+  frontend:
+    image: ${ACR_LOGIN_SERVER}/gastosin-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - gastosin
+
+  backend:
+    image: ${ACR_LOGIN_SERVER}/gastosin-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - /etc/gastosin/.env          # lives on VPS, never in repo
+    networks:
+      - gastosin
+
+networks:
+  gastosin:
+    driver: bridge
