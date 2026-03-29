@@ -10,7 +10,21 @@
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api'
 
-// TODO: implement
+/**
+ * @param {Array<{date: string, merchant: string, amount: number}>} sanitizedRows
+ * @returns {Promise<Array<{date: string, merchant: string, amount: number, category: string, subcategory: string|null}>>}
+ */
 export async function categorize(sanitizedRows) {
-  throw new Error('Not implemented')
+  const res = await fetch(`${API_BASE}/categorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transactions: sanitizedRows }),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Categorization failed: ${res.status} ${res.statusText}`)
+  }
+
+  const data = await res.json()
+  return data.transactions
 }

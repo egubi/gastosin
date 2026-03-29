@@ -8,5 +8,5 @@ build/
 .DS_Store
 coverage/
 .vite/
-files.zip
+gastosin-scaffold.zip
 .direnv
