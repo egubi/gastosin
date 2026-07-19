@@ -33,7 +33,11 @@ export default function UploadZone({ onFileProcessed }) {
       onFileProcessed(sanitized)
     } catch (err) {
       console.error(err)
-      setError('Failed to parse PDF. Please try again or use a different statement.')
+      if (err?.isPasswordProtected) {
+        setError('This PDF is password-protected. Open it in a PDF reader, save a copy without a password, then upload that copy.')
+      } else {
+        setError('Failed to parse PDF. Make sure the file is a valid, unencrypted credit card statement.')
+      }
       setStatus('error')
     }
   }, [onFileProcessed])
@@ -88,9 +92,9 @@ export default function UploadZone({ onFileProcessed }) {
               PDF files from BPI, BDO, Metrobank, UnionBank, and more
             </p>
             <div className="text-center">
-              <button type="button" className="bg-[#1D9E75] hover:bg-[#178763] text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors">
+              <span className="bg-[#1D9E75] hover:bg-[#178763] text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer">
                 Choose file
-              </button>
+              </span>
             </div>
           </>
         )}

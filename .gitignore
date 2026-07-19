@@ -10,3 +10,4 @@ coverage/
 .vite/
 gastosin-scaffold.zip
 .direnv
+*.pdf
