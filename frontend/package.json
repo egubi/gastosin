@@ -10,18 +10,19 @@
     "lint": "eslint src --ext .js,.jsx"
   },
   "dependencies": {
+    "idb": "^8.0.0",
+    "pdfjs-dist": "^4.6.82",
+    "ph-statements": "github:null-pointer-labs/gastosin-adapters#main",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0",
-    "pdfjs-dist": "^4.6.82",
-    "idb": "^8.0.0"
+    "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.1",
-    "eslint": "^9.9.0",
-    "tailwindcss": "^3.4.10",
     "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.45"
+    "eslint": "^9.9.0",
+    "postcss": "^8.4.45",
+    "tailwindcss": "^3.4.10",
+    "vite": "^5.4.1"
   }
 }

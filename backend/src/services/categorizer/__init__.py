@@ -2,16 +2,23 @@
 Proprietary merchant categorization — the GastosIn moat.
 Backend only. Never expose this logic client-side.
 
-Three-layer taxonomy (CLAUDE.md):
-  Layer 1: Base defaults      — ships day one (implemented here)
-  Layer 2: Learned mappings   — post-MVP
-  Layer 3: Personal overrides — post-MVP
+Architecture (two layers):
+  Layer 1 (primary)  — DB-backed CategorizationService:
+      normalize → cascade DB lookup → LLM fallback → write-back
+  Layer 2 (fallback) — in-memory BASE_MAPPINGS:
+      used when the DB pool is not yet initialised (e.g. unit tests,
+      dev without a database, startup before the pool is ready).
 
-MVP: base defaults only. Exact-match on lowercase merchant name,
-     with a fallback to "Other" if no match found.
+The public interface `categorize_transactions` is unchanged.
 """
+from __future__ import annotations
+
+import logging
+from typing import Optional
 
 from src.models import Transaction, CategorizedTransaction
+
+logger = logging.getLogger("gastosin.categorizer")
 
 # ---------------------------------------------------------------------------
 # Base mappings — common Philippine merchants
@@ -89,11 +96,12 @@ BASE_MAPPINGS: list[tuple[str, str, str]] = [
 ]
 
 
-def _match_merchant(merchant: str) -> tuple[str, str]:
-    """
-    Returns (category, subcategory) for a given merchant name.
-    Tries substring match on lowercased merchant, falls back to ("Other", None).
-    """
+# ---------------------------------------------------------------------------
+# Layer 2: in-memory fallback
+# ---------------------------------------------------------------------------
+
+def _match_merchant(merchant: str) -> tuple[str, Optional[str]]:
+    """Substring match on lowercased merchant; falls back to ("Other", None)."""
     merchant_lower = merchant.lower()
     for keyword, category, subcategory in BASE_MAPPINGS:
         if keyword in merchant_lower:
@@ -101,7 +109,7 @@ def _match_merchant(merchant: str) -> tuple[str, str]:
     return "Other", None
 
 
-async def categorize_transactions(
+async def _fallback_categorize(
     transactions: list[Transaction],
 ) -> list[CategorizedTransaction]:
     results = []
@@ -117,3 +125,83 @@ async def categorize_transactions(
             )
         )
     return results
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: DB-backed service
+# ---------------------------------------------------------------------------
+
+def _make_service():
+    """Build a CategorizationService from the live pool and settings."""
+    from src.db import get_pool
+    from src.config import settings
+    from src.services.categorizer.service import (
+        CategorizationService,
+        CategorizationConfig,
+    )
+    from src.services.categorizer.llm_client import LLMClient
+
+    pool = get_pool()  # raises RuntimeError if pool is not yet initialised
+    config = CategorizationConfig(
+        confidence_threshold=settings.LLM_CONFIDENCE_THRESHOLD,
+        fuzzy_threshold=settings.LLM_FUZZY_THRESHOLD,
+        model_version=settings.LLM_MODEL,
+    )
+    return CategorizationService(config=config, pool=pool, llm=LLMClient(settings))
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (unchanged signature)
+# ---------------------------------------------------------------------------
+
+async def categorize_transactions(
+    transactions: list[Transaction],
+) -> list[CategorizedTransaction]:
+    """
+    Categorize a list of sanitized transactions.
+
+    Primary path  : DB-backed CategorizationService (cascade + LLM).
+    Fallback path : in-memory BASE_MAPPINGS when the DB pool is absent.
+    """
+    try:
+        service = _make_service()
+    except (RuntimeError, ImportError) as exc:
+        logger.warning(
+            "DB service unavailable, using in-memory fallback: %s", exc
+        )
+        return await _fallback_categorize(transactions)
+
+    merchant_strings = [t.merchant for t in transactions]
+    results = await service.categorize_batch(merchant_strings)
+
+    # Resolve category_id → display labels via DB
+    category_labels: dict[int, dict] = {}
+    try:
+        from src.db import get_pool
+        from src.services.categorizer import repo
+
+        async with get_pool().acquire() as conn:
+            category_labels = await repo.get_category_label_map(conn)
+    except Exception as exc:
+        logger.warning("Could not fetch category label map: %s", exc)
+
+    output: list[CategorizedTransaction] = []
+    for txn, result in zip(transactions, results):
+        if result.category_id and result.category_id in category_labels:
+            info = category_labels[result.category_id]
+            category: str = info["category"]
+            subcategory: Optional[str] = info["subcategory"]
+        else:
+            category, subcategory = _match_merchant(txn.merchant)
+
+        output.append(
+            CategorizedTransaction(
+                date=txn.date,
+                merchant=txn.merchant,
+                amount=txn.amount,
+                category=category,
+                subcategory=subcategory,
+            )
+        )
+
+    return output

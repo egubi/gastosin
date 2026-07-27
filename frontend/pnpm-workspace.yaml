@@ -1,0 +1,3 @@
+allowBuilds:
+  esbuild: false
+  ph-statements@https://codeload.github.com/null-pointer-labs/gastosin-adapters/tar.gz/ec93a93119b640ccad1730d92a83fa9a70cd095c: true

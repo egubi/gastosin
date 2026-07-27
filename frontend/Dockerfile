@@ -1,6 +1,7 @@
 # ── Development stage ─────────────────────────────────────────────────────────
 FROM node:20-alpine AS dev
 WORKDIR /app
+RUN apk add --no-cache git
 COPY package*.json ./
 RUN npm install
 COPY . .
@@ -10,8 +11,9 @@ CMD ["npm", "run", "dev"]
 # ── Build stage ────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS build
 WORKDIR /app
+RUN apk add --no-cache git
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build
 

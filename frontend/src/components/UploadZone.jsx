@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import FallbackButtons from './FallbackButtons'
 
 export default function UploadZone({ onFileProcessed }) {
   const [isDragging, setIsDragging] = useState(false)
@@ -24,7 +25,7 @@ export default function UploadZone({ onFileProcessed }) {
       const sanitized = sanitize(rawRows)
 
       if (sanitized.length === 0) {
-        setError('No transactions found. Make sure this is a valid credit card statement.')
+        setError('UNKNOWN_BANK')
         setStatus('error')
         return
       }
@@ -36,7 +37,7 @@ export default function UploadZone({ onFileProcessed }) {
       if (err?.isPasswordProtected) {
         setError('This PDF is password-protected. Open it in a PDF reader, save a copy without a password, then upload that copy.')
       } else {
-        setError('Failed to parse PDF. Make sure the file is a valid, unencrypted credit card statement.')
+        setError('UNKNOWN_BANK')
       }
       setStatus('error')
     }
@@ -89,7 +90,7 @@ export default function UploadZone({ onFileProcessed }) {
             </svg>
             <p className="text-lg mb-2 text-center">Drop your statement here</p>
             <p className="text-sm text-neutral-500 mb-6 text-center">
-              PDF files from BPI, BDO, Metrobank, UnionBank, and more
+              PDF or CSV · nothing is uploaded
             </p>
             <div className="text-center">
               <span className="bg-[#1D9E75] hover:bg-[#178763] text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer">
@@ -100,7 +101,15 @@ export default function UploadZone({ onFileProcessed }) {
         )}
       </label>
 
-      {status === 'error' && (
+      {status === 'error' && error === 'UNKNOWN_BANK' && (
+        <div className="mt-4 mx-auto max-w-3xl bg-[#1f1f1f] border border-[#333]/50 rounded-xl px-5 py-4">
+          <p className="text-sm text-neutral-300 mb-3">
+            We couldn't recognize this statement format.
+          </p>
+          <FallbackButtons />
+        </div>
+      )}
+      {status === 'error' && error !== 'UNKNOWN_BANK' && (
         <div className="mt-6 mx-auto max-w-3xl bg-red-500/10 border border-red-500/50 rounded-lg px-5 py-4 text-sm text-red-400">
           {error}
         </div>

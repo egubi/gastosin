@@ -4,18 +4,15 @@
  * Supports: UnionBank Rewards Platinum Mastercard / Visa Platinum
  *
  * Flow:
- *   1. Load PDF with pdf.js
- *   2. Extract text items per page, group by Y coordinate → reconstruct lines
+ *   1. Extract StatementDocument via extractPdf (pdf.js concerns stay there)
+ *   2. Group items per page by Y coordinate → reconstruct lines
  *   3. Parse each transaction line: txn date | posting date | merchant | amount
  *   4. Return raw rows — sanitizer runs next
  *
  * IMPORTANT: The full PDF never leaves the browser. Only parsed rows proceed.
  */
 
-import * as pdfjsLib from 'pdfjs-dist'
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+import { extractPdf } from '../pdf/extract'
 
 // Accepts both MM/DD/YY (2-digit) and MM/DD/YYYY (4-digit) — UnionBank uses 2-digit
 const DATE_RE = /^\d{2}\/\d{2}\/(\d{2}|\d{4})$/
@@ -28,6 +25,7 @@ const CARD_HEADER_RE = /(MASTERCARD|VISA).*[\d*-]+\d{4}$/i
 // Currency indicator tokens to strip from the merchant field
 const CURRENCY_TOKEN_RE = /^(PHP|P)$/
 
+// PUBLIC:
 /**
  * Convert MM/DD/YY or MM/DD/YYYY → YYYY-MM-DD
  */
@@ -37,30 +35,32 @@ function mmddToISO(dateStr) {
   return `${yyyy}-${mm}-${dd}`
 }
 
+// PUBLIC:
 /**
- * Group pdf.js text items into lines by Y coordinate.
+ * Group StatementDocument page items into lines by Y coordinate.
  * Returns lines sorted top-to-bottom, each line sorted left-to-right.
  */
-function extractLines(textContent) {
+function extractLines(page) {
   const lineMap = new Map()
 
-  for (const item of textContent.items) {
+  for (const item of page.items) {
     if (!item.str.trim()) continue
     // Round Y to nearest 2px to handle sub-pixel differences on the same line
-    const y = Math.round(item.transform[5] / 2) * 2
+    const y = Math.round(item.y / 2) * 2
     if (!lineMap.has(y)) lineMap.set(y, [])
     lineMap.get(y).push(item)
   }
 
-  // PDF Y-axis is bottom-up, so descending Y = top of page first
-  const sortedYs = [...lineMap.keys()].sort((a, b) => b - a)
+  // top-left origin: ascending Y = top of page first
+  const sortedYs = [...lineMap.keys()].sort((a, b) => a - b)
 
   return sortedYs.map(y => {
-    const items = lineMap.get(y).sort((a, b) => a.transform[4] - b.transform[4])
+    const items = lineMap.get(y).sort((a, b) => a.x - b.x)
     return items.map(i => i.str.trim()).filter(Boolean)
   })
 }
 
+// PUBLIC:
 function parsePage(lines, results) {
   for (const tokens of lines) {
     const lineText = tokens.join(' ')
@@ -113,31 +113,16 @@ function parsePage(lines, results) {
  * @throws {Error} with a user-friendly message property
  */
 export async function parsePDF(file) {
-  const arrayBuffer = await file.arrayBuffer()
-
-  let pdf
-  try {
-    pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
-  } catch (err) {
-    // pdf.js throws a PasswordException for password-protected PDFs
-    if (err?.name === 'PasswordException' || err?.code === 1) {
-      const e = new Error('PASSWORD_PROTECTED')
-      e.isPasswordProtected = true
-      throw e
-    }
-    throw err
-  }
+  const doc = await extractPdf(file)
 
   console.group('[GastosIn] PDF parsing started')
-  console.log('Pages:', pdf.numPages, '| File:', file.name)
+  console.log('Pages:', doc.pages.length, '| File:', file.name)
 
   const results = []
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum)
-    const textContent = await page.getTextContent()
-    const lines = extractLines(textContent)
-    console.log(`Page ${pageNum} — ${lines.length} lines extracted`)
-    if (pageNum === 1) {
+  for (let i = 0; i < doc.pages.length; i++) {
+    const lines = extractLines(doc.pages[i])
+    console.log(`Page ${i + 1} — ${lines.length} lines extracted`)
+    if (i === 0) {
       console.log('First 10 lines of page 1 (joined):', lines.slice(0, 10).map(l => l.join(' ')))
     }
     parsePage(lines, results)

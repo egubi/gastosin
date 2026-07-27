@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useStatement } from '../context/StatementContext'
 import UploadZone from '../components/UploadZone'
+import SupportedBanks from '../components/SupportedBanks'
 
 export default function LandingPage() {
   const navigate = useNavigate()
@@ -39,7 +40,10 @@ export default function LandingPage() {
         </div>
 
         {/* Upload zone */}
-        <UploadZone onFileProcessed={handleFileProcessed} />
+        <div className="max-w-3xl mx-auto">
+          <UploadZone onFileProcessed={handleFileProcessed} />
+          <SupportedBanks />
+        </div>
       </section>
 
       {/* How it works */}
