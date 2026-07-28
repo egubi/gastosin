@@ -320,6 +320,30 @@ async def insert_categorization_log(
     )
 
 
+async def insert_request_log(
+    conn: asyncpg.Connection,
+    batch_size: int,
+    latency_ms: int,
+    llm_calls: int,
+    cache_hits: int,
+) -> None:
+    """
+    Append a request-level audit row.  Captures throughput and LLM usage
+    per /api/categorize call.  Non-fatal — caller should swallow exceptions.
+    """
+    await conn.execute(
+        """
+        INSERT INTO request_log
+            (batch_size, latency_ms, llm_calls, cache_hits)
+        VALUES ($1, $2, $3, $4)
+        """,
+        batch_size,
+        latency_ms,
+        llm_calls,
+        cache_hits,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

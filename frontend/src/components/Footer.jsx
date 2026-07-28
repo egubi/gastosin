@@ -6,11 +6,16 @@ export default function Footer() {
           Your data never leaves your browser. All processing happens locally on your device.
         </p>
         <p className="text-sm text-neutral-500 mt-2">
-          Client code is open source. Verify it yourself on{' '}
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-[#1D9E75] hover:underline">
-            GitHub
+          Bank adapters are open source.{' '}
+          <a
+            href="https://github.com/null-pointer-labs/gastosin-adapters"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#1D9E75] hover:underline"
+          >
+            View on GitHub
           </a>
-          .
+          {' '}— contributions welcome.
         </p>
       </div>
     </footer>

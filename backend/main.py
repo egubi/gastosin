@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.routes import categorize, health
+from src.routes import categorize, health, submissions
 from src.config import settings
 from src.db import init_pool, close_pool
 
@@ -41,3 +41,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(categorize.router, prefix="/api")
+app.include_router(submissions.router, prefix="/api")

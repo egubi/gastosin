@@ -1,10 +1,13 @@
 import { useState, useCallback } from 'react'
 import FallbackButtons from './FallbackButtons'
+import UnknownFormatModal from './UnknownFormatModal'
 
 export default function UploadZone({ onFileProcessed }) {
   const [isDragging, setIsDragging] = useState(false)
   const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
+  const [showConsentModal, setShowConsentModal] = useState(false)
+  const [pendingFile, setPendingFile] = useState(null)
 
   const processFile = useCallback(async (file) => {
     if (!file || file.type !== 'application/pdf') {
@@ -27,6 +30,8 @@ export default function UploadZone({ onFileProcessed }) {
       if (sanitized.length === 0) {
         setError('UNKNOWN_BANK')
         setStatus('error')
+        setPendingFile(file)
+        setShowConsentModal(true)
         return
       }
 
@@ -38,6 +43,8 @@ export default function UploadZone({ onFileProcessed }) {
         setError('This PDF is password-protected. Open it in a PDF reader, save a copy without a password, then upload that copy.')
       } else {
         setError('UNKNOWN_BANK')
+        setPendingFile(file)
+        setShowConsentModal(true)
       }
       setStatus('error')
     }
@@ -114,6 +121,48 @@ export default function UploadZone({ onFileProcessed }) {
           {error}
         </div>
       )}
+      {status === 'success' && (
+        <div className="mt-6 mx-auto max-w-3xl bg-green-500/10 border border-green-500/50 rounded-lg px-5 py-4 text-sm text-green-400">
+          ✓ Thank you! Your submission helps us improve GastosIn.
+        </div>
+      )}
+
+      <UnknownFormatModal
+        isOpen={showConsentModal}
+        file={pendingFile}
+        onClose={() => setShowConsentModal(false)}
+        onSubmit={async (submittedFile) => {
+          try {
+            const formData = new FormData()
+            formData.append('file', submittedFile)
+            formData.append('consent', 'true')
+
+            console.log('[UploadZone] Submitting unknown format PDF:', submittedFile.name)
+
+            const response = await fetch('/api/submit-unknown-format', {
+              method: 'POST',
+              body: formData,
+            })
+
+            if (!response.ok) {
+              const errorData = await response.json()
+              throw new Error(errorData.detail || 'Failed to submit PDF')
+            }
+
+            const result = await response.json()
+            console.log('[UploadZone] Submission successful:', result)
+
+            setShowConsentModal(false)
+            setStatus('success')
+            setTimeout(() => setStatus(null), 3000)
+          } catch (err) {
+            console.error('[UploadZone] Submission error:', err)
+            setError(`Submission failed: ${err.message}`)
+            setStatus('error')
+            setShowConsentModal(false)
+          }
+        }}
+      />
     </div>
   )
 }

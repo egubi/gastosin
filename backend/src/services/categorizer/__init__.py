@@ -156,12 +156,14 @@ def _make_service():
 
 async def categorize_transactions(
     transactions: list[Transaction],
-) -> list[CategorizedTransaction]:
+) -> tuple[list[CategorizedTransaction], int, int]:
     """
     Categorize a list of sanitized transactions.
 
     Primary path  : DB-backed CategorizationService (cascade + LLM).
     Fallback path : in-memory BASE_MAPPINGS when the DB pool is absent.
+
+    Returns (categorized_transactions, llm_calls, cache_hits).
     """
     try:
         service = _make_service()
@@ -169,7 +171,8 @@ async def categorize_transactions(
         logger.warning(
             "DB service unavailable, using in-memory fallback: %s", exc
         )
-        return await _fallback_categorize(transactions)
+        fallback = await _fallback_categorize(transactions)
+        return fallback, 0, len(transactions)
 
     merchant_strings = [t.merchant for t in transactions]
     results = await service.categorize_batch(merchant_strings)
@@ -204,4 +207,7 @@ async def categorize_transactions(
             )
         )
 
-    return output
+    llm_calls = sum(1 for r in results if r.source == "llm")
+    cache_hits = len(results) - llm_calls
+
+    return output, llm_calls, cache_hits

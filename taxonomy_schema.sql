@@ -1,3 +1,11 @@
+CREATE TABLE request_log (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    batch_size  INT,           -- how many transactions were submitted
+    latency_ms  INT,           -- total time for the request
+    llm_calls   INT,           -- how many fell through to LLM
+    cache_hits  INT            -- alias + merchant + fuzzy hits
+);
 -- ============================================================
 -- Gastos-In :: Merchant Taxonomy Dictionary
 -- Purpose: taxonomy-only. NO user transactions, NO amounts, NO PII.

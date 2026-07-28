@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # pg_trgm similarity must be >= this for a fuzzy match to count
     LLM_FUZZY_THRESHOLD: float = 0.45
 
+    # ------------------------------------------------------------------
+    # Submissions
+    # ------------------------------------------------------------------
+    UPLOAD_DIR: str = "/app/uploads"
+
     class Config:
         env_file = ".env"
         extra = "ignore"  # silently drop .env vars not declared in Settings
