@@ -11,3 +11,10 @@ coverage/
 gastosin-scaffold.zip
 .direnv
 *.pdf
+
+# Terraform
+_iac/.terraform/
+_iac/.terraform.lock.hcl
+_iac/terraform.tfstate
+_iac/terraform.tfstate.backup
+_iac/terraform.tfvars

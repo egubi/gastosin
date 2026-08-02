@@ -1,99 +1,111 @@
+-- =============================================================
+-- GastosIn :: Full Schema Bootstrap
+-- Target: Azure Database for PostgreSQL Flexible Server 16
+-- Extensions must be allowlisted in azure.extensions:
+--   pgcrypto, uuid-ossp, pg_trgm, citext
+-- Run this file once against a fresh database.
+-- =============================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS citext;
+
+-- =============================================================
+-- SESSION RESULTS
+-- Per-session categorization output, encrypted payload
+-- =============================================================
+CREATE TABLE session_results (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_hash        TEXT NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT now(),
+    transaction_count   INT,
+    batch_month         DATE,
+    top_category        TEXT,
+    results_enc         BYTEA NOT NULL
+);
+CREATE INDEX idx_session_results_hash  ON session_results (session_hash);
+CREATE INDEX idx_session_results_month ON session_results (batch_month);
+
+-- =============================================================
+-- REQUEST LOG
+-- =============================================================
 CREATE TABLE request_log (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     created_at  TIMESTAMPTZ DEFAULT now(),
-    batch_size  INT,           -- how many transactions were submitted
-    latency_ms  INT,           -- total time for the request
-    llm_calls   INT,           -- how many fell through to LLM
-    cache_hits  INT            -- alias + merchant + fuzzy hits
+    batch_size  INT,
+    latency_ms  INT,
+    llm_calls   INT,
+    cache_hits  INT
 );
--- ============================================================
--- Gastos-In :: Merchant Taxonomy Dictionary
--- Purpose: taxonomy-only. NO user transactions, NO amounts, NO PII.
--- Stores merchant strings -> categories so every user benefits
--- from a shared, growing dictionary.
--- Postgres 14+
--- ============================================================
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pg_trgm;      -- fuzzy / similarity matching
-CREATE EXTENSION IF NOT EXISTS citext;       -- case-insensitive text
-
--- ------------------------------------------------------------
--- 1. CATEGORIES  (the closed, hierarchical taxonomy)
---    Hierarchy lets you go coarse (Food) or fine (Food > Fast Food)
---    without schema changes. This is your "closed list" for the LLM.
--- ------------------------------------------------------------
+-- =============================================================
+-- CATEGORIES
+-- =============================================================
 CREATE TABLE categories (
     id          SMALLINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    key         CITEXT NOT NULL UNIQUE,          -- 'food_dining', 'transport'
-    label       TEXT   NOT NULL,                 -- 'Food & Dining'
+    key         CITEXT NOT NULL UNIQUE,
+    label       TEXT   NOT NULL,
     parent_id   SMALLINT REFERENCES categories(id) ON DELETE RESTRICT,
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,   -- retire without deleting
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order  SMALLINT NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_categories_parent ON categories(parent_id);
 
--- ------------------------------------------------------------
--- 2. MERCHANTS  (one canonical row per real-world merchant)
---    normalized_name is the dictionary KEY. Strip IDs, locations,
---    punctuation before insert: "PAYPAL *NBA LG PASS, [ID]" -> "paypal nba lg pass"
--- ------------------------------------------------------------
+-- =============================================================
+-- MERCHANTS
+-- =============================================================
 CREATE TABLE merchants (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    normalized_name  CITEXT NOT NULL UNIQUE,     -- the lookup key
-    display_name     TEXT,                       -- pretty label for UI
-    country_code     CHAR(2),                    -- 'PH' — same brand, diff region
+    normalized_name  CITEXT NOT NULL UNIQUE,
+    display_name     TEXT,
+    country_code     CHAR(2),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- trigram index for fuzzy matching when exact lookup misses
-CREATE INDEX idx_merchants_norm_trgm ON merchants USING gin (normalized_name gin_trgm_ops);
+CREATE INDEX idx_merchants_norm_trgm ON merchants
+    USING gin (normalized_name gin_trgm_ops);
 
--- ------------------------------------------------------------
--- 3. MERCHANT_ALIASES  (the raw statement strings people actually see)
---    Many raw variants -> one merchant. This is what makes the
---    dictionary robust: every new spelling you learn is stored once.
---    occurrence_count = popularity signal (NOT tied to any user).
--- ------------------------------------------------------------
+-- =============================================================
+-- MERCHANT ALIASES
+-- =============================================================
 CREATE TABLE merchant_aliases (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     merchant_id      UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
-    raw_string       TEXT   NOT NULL,            -- exact string as seen on statement
-    normalized_name  CITEXT NOT NULL,            -- normalized form of raw_string
-    occurrence_count BIGINT NOT NULL DEFAULT 1,  -- how often seen across all users
+    raw_string       TEXT   NOT NULL,
+    normalized_name  CITEXT NOT NULL,
+    occurrence_count BIGINT NOT NULL DEFAULT 1,
     first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (normalized_name)
 );
-CREATE INDEX idx_aliases_merchant ON merchant_aliases(merchant_id);
-CREATE INDEX idx_aliases_norm_trgm ON merchant_aliases USING gin (normalized_name gin_trgm_ops);
+CREATE INDEX idx_aliases_merchant  ON merchant_aliases(merchant_id);
+CREATE INDEX idx_aliases_norm_trgm ON merchant_aliases
+    USING gin (normalized_name gin_trgm_ops);
 
--- ------------------------------------------------------------
--- 4. MERCHANT_CATEGORY  (the actual dictionary mapping)
---    Current best category for a merchant + provenance & trust.
---    One active mapping per merchant; history kept in audit table.
--- ------------------------------------------------------------
+-- =============================================================
+-- MERCHANT CATEGORY
+-- =============================================================
 CREATE TYPE category_source AS ENUM ('rule', 'llm', 'human_verified', 'import');
 
 CREATE TABLE merchant_category (
     merchant_id   UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
     category_id   SMALLINT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
     source        category_source NOT NULL,
-    confidence    NUMERIC(4,3) NOT NULL DEFAULT 1.000,  -- 0.000–1.000
-    is_verified   BOOLEAN NOT NULL DEFAULT FALSE,       -- reviewed by a human
-    model_version TEXT,                                 -- which LLM/prompt assigned it
+    confidence    NUMERIC(4,3) NOT NULL DEFAULT 1.000,
+    is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+    model_version TEXT,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (merchant_id)                           -- one active mapping per merchant
+    PRIMARY KEY (merchant_id)
 );
 CREATE INDEX idx_mc_category ON merchant_category(category_id);
-CREATE INDEX idx_mc_lowconf ON merchant_category(confidence) WHERE is_verified = FALSE;
+CREATE INDEX idx_mc_lowconf  ON merchant_category(confidence)
+    WHERE is_verified = FALSE;
 
--- ------------------------------------------------------------
--- 5. CATEGORIZATION_LOG  (audit trail — every decision, incl. LLM I/O)
---    Feeds future model training + lets you debug bad calls.
---    Also captures corrections (source=human_verified overriding an llm row).
--- ------------------------------------------------------------
+-- =============================================================
+-- CATEGORIZATION LOG
+-- =============================================================
 CREATE TABLE categorization_log (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     merchant_id     UUID REFERENCES merchants(id) ON DELETE SET NULL,
@@ -105,13 +117,11 @@ CREATE TABLE categorization_log (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_catlog_merchant ON categorization_log(merchant_id);
-CREATE INDEX idx_catlog_created ON categorization_log(created_at);
+CREATE INDEX idx_catlog_created  ON categorization_log(created_at);
 
--- ------------------------------------------------------------
--- 6. UNRESOLVED_QUEUE  (things the LLM couldn't confidently place)
---    Instead of forcing a wrong "Other", park low-confidence strings
---    here for human/LLM review. This is your taxonomy-growth backlog.
--- ------------------------------------------------------------
+-- =============================================================
+-- UNRESOLVED QUEUE
+-- =============================================================
 CREATE TABLE unresolved_queue (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     raw_string       TEXT NOT NULL,
@@ -119,53 +129,38 @@ CREATE TABLE unresolved_queue (
     occurrence_count BIGINT NOT NULL DEFAULT 1,
     best_guess_id    SMALLINT REFERENCES categories(id) ON DELETE SET NULL,
     best_confidence  NUMERIC(4,3),
-    status           TEXT NOT NULL DEFAULT 'pending',  -- pending|resolved|ignored
+    status           TEXT NOT NULL DEFAULT 'pending',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_unresolved_status ON unresolved_queue(status, occurrence_count DESC);
+CREATE INDEX idx_unresolved_status ON unresolved_queue
+    (status, occurrence_count DESC);
 
--- ============================================================
--- POST-MVP ROADMAP  (NOT implemented — do not build for MVP)
--- Kept here so scope is captured and the taxonomy design stays
--- compatible with it. Revisit after MVP ships.
--- ============================================================
+-- =============================================================
+-- UNKNOWN FORMAT SUBMISSIONS
+-- Tracks PDFs voluntarily submitted by users for unknown CC formats.
+-- Actual file lives in Azure Blob Storage (container: submissions).
+-- This table is the metadata record + audit trail.
+-- =============================================================
+CREATE TABLE unknown_format_submissions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
--- (A) USER OVERRIDES  — per-user recategorization without touching
---     the shared global dictionary. The global map above stays the
---     source of truth; this only changes what ONE user sees.
---     Design hook: keep merchant_category as global; add a thin
---     override layer keyed by (user_id, merchant_id). Resolution at
---     read time = user_override ?? merchant_category. A repeated,
---     agreeing override across many users is a strong signal to
---     promote it into the global map (is_verified = TRUE).
---
---     CREATE TABLE user_overrides (
---         user_id     UUID NOT NULL,
---         merchant_id UUID NOT NULL REFERENCES merchants(id),
---         category_id SMALLINT NOT NULL REFERENCES categories(id),
---         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
---         PRIMARY KEY (user_id, merchant_id)
---     );
+    -- blob reference (filename in Azure Storage submissions container)
+    blob_filename   TEXT NOT NULL,
 
--- (B) SAVED / RESUMABLE REPORTS  — user leaves, comes back next
---     month, inputs prior month via a "code", and the app concats
---     with the current month. Report payloads ENCRYPTED at rest.
---     Key open questions to resolve BEFORE building:
---       - The "code": is it the decryption key itself (zero-knowledge,
---         we can't read it) or just a lookup handle to an encrypted
---         row? Zero-knowledge is safer but means lost code = lost data.
---       - Encryption boundary: app-layer (envelope encryption, keys in
---         KMS) vs pgcrypto. App-layer preferred for key rotation.
---       - This introduces USER-LINKED financial data — a different
---         privacy/compliance posture than the taxonomy-only core.
---         Keep it in a SEPARATE table/schema so the shared dictionary
---         stays clean and reusable.
---
---     Sketch only (do not create yet):
---     CREATE TABLE saved_reports (
---         id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
---         access_code_hash TEXT NOT NULL,   -- hash of user code, never plaintext
---         ciphertext     BYTEA NOT NULL,    -- encrypted report payload
---         period         DATE NOT NULL,     -- month this report covers
---         created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
---     );
+    -- file metadata
+    original_name   TEXT,
+    size_bytes      BIGINT,
+
+    -- consent audit (legal coverage)
+    consent_given   BOOLEAN NOT NULL DEFAULT TRUE,
+    consent_text    TEXT NOT NULL,    -- exact checkbox text shown to user at time of submission
+    ip_hash         TEXT,             -- hashed IP, not raw — for abuse detection only
+
+    -- review workflow
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | reviewed | supported | ignored
+    reviewed_at     TIMESTAMPTZ,
+    reviewer_notes  TEXT
+);
+CREATE INDEX idx_submissions_status    ON unknown_format_submissions(status);
+CREATE INDEX idx_submissions_created   ON unknown_format_submissions(created_at);
